@@ -1,7 +1,6 @@
 require 'csv'
 require 'functions_framework'
 require 'google/cloud/storage'
-require 'google/cloud/error_reporting'
 
 require_relative 'ai_pdf_parser'
 
@@ -18,7 +17,7 @@ class App
         withdrawals: { type: :number },
         deposits: { type: :number },
         balance: { type: :number },
-        currency: { type: :string },
+        currency: { type: :string, enum: [:CAD, :USD], default: :CAD },
         category: { type: :string }
       },
       required: [:date, :description, :balance, :currency, :category]
@@ -38,19 +37,12 @@ class App
     store_transactions(transactions, bucket_name, csv_file_path)
   end
 
-  def check_all_folders(bucket_name)
-    @google_storage.bucket(bucket_name).files.each do |file|
-      puts file.name
-      puts 1
-    end
-  end
-
   private
 
   def parse_transactions(bucket_name, file_path)
     folder_name = folder(file_path)
 
-    if folder_name == 'rbc'
+    if folder_name == 'RBC'
       parse_rbc_statement(bucket_name, file_path)
     else
       raise NotImplementedError.new("Parser for #{folder_name} is not implemented")
@@ -60,7 +52,7 @@ class App
   def store_transactions(transactions, bucket_name, file_path)
     csv_file = CSV.generate do |csv|
       csv << PROPERTIES
-      transactions.each { |transaction| csv << transaction.slice(*PROPERTIES).values }
+      transactions.each { |transaction| csv << PROPERTIES.map { |property| transaction[property] } }
     end
 
     # noinspection RubyMismatchedArgumentType
@@ -79,11 +71,7 @@ class App
       ]
     )
 
-    begin
-      JSON.parse(raw_transactions, symbolize_names: true)
-    rescue JSON::ParserError => exception
-      Google::Cloud::ErrorReporting.report(exception)
-    end
+    JSON.parse(raw_transactions, symbolize_names: true)
   end
 
   def folder(file_name)
@@ -95,9 +83,4 @@ FunctionsFramework.cloud_event('parse_pdf') do |event|
   bucket_name = event.data.fetch('bucket')
   folder_name = event.data.fetch('name')
   App.new.parse_pdf(bucket_name, folder_name)
-end
-
-FunctionsFramework.cloud_event('check_all_folders') do |event|
-  bucket_name = event.data.fetch('bucket')
-  App.new.check_all_folders(bucket_name)
 end
